@@ -11,11 +11,22 @@ namespace SignalRChat
 {
     public class ChatHub : Hub
     {
+        public string connString = "";
+
+        public ChatHub()
+        {
+            var conn = ConfigurationManager.ConnectionStrings["AzureConnectionString"];
+            connString = conn.ConnectionString;
+        }
+
 
         public void Send(string name, string message)
         {
             // Call the broadcastMessage method to update clients.
-            Clients.All.broadcastMessage(name, message);
+          //  Clients.All.broadcastMessage(name, message);
+
+            int roomID = GetRoomsStatus(Context.ConnectionId);
+            SendMessageToRoom(roomID, message);
 
         }
 
@@ -23,9 +34,6 @@ namespace SignalRChat
         public async Task Locations(string name, string latitude, string longitude)
         {
             // Call the broadcastMessage method to update clients.
-
-            var conn = ConfigurationManager.ConnectionStrings["AzureConnectionString"];
-            string connString = conn.ConnectionString;
 
             using (SqlConnection con = new SqlConnection(connString))
             {
@@ -40,10 +48,10 @@ namespace SignalRChat
 
                 //
 
-                string sql = "INSERT INTO users(name) VALUES(@param1)";
+                string sql = "INSERT INTO users(name,connectionID) VALUES(@param1,@param2)";
                 SqlCommand cmd = new SqlCommand(sql, con);
                 cmd.Parameters.AddWithValue("@param1", name);
-
+                cmd.Parameters.AddWithValue("@param2", Context.ConnectionId);
                 cmd.ExecuteNonQuery();
 
                 using (SqlCommand command = new SqlCommand("SELECT TOP 1 * FROM users ORDER BY userID DESC", con))
@@ -61,7 +69,6 @@ namespace SignalRChat
                 cmd = new SqlCommand(sql, con);
                 cmd.Parameters.AddWithValue("@param1", userid);
                 cmd.Parameters.AddWithValue("@param2", name + "'s room");
-                cmd.Parameters.AddWithValue("@param3", longitude);
                 cmd.ExecuteNonQuery();
 
                 //
@@ -129,6 +136,10 @@ namespace SignalRChat
                     // join room and emit message to room
                     await JoinRoom(Convert.ToString(roomID));
                     Clients.Group(Convert.ToString(roomID)).addChatMessage(Context.User.Identity.Name + " joined.");
+                    InsertToRoomStatus(roomID, userid);
+
+
+
                 }
                 else
                 {
@@ -146,6 +157,7 @@ namespace SignalRChat
 
                     // join own room first
                     await JoinRoom(Convert.ToString(initialroomid));
+                    InsertToRoomStatus(roomID, userid);
                 }
 
 
@@ -161,6 +173,66 @@ namespace SignalRChat
         {
             return Groups.Remove(Context.ConnectionId, roomName);
         }
+
+        public Task SendMessageToRoom(int roomID, string message)
+        {
+            return Clients.Group(Convert.ToString(roomID)).addChatMessage(message);
+        }
+
+
+        public void InsertToRoomStatus(int roomID, int userID) 
+        {
+            using (SqlConnection con = new SqlConnection(connString))
+            {
+                //
+                // Open the SqlConnection.
+                //
+                con.Open();
+
+                string sql = "INSERT INTO roomsstatus(roomID, userID) VALUES(@param1,@param2)";
+                SqlCommand cmd = new SqlCommand(sql, con);
+                cmd.Parameters.AddWithValue("@param1", roomID);
+                cmd.Parameters.AddWithValue("@param2", userID);
+                cmd.ExecuteNonQuery();
+            }
+        }
+
+        public int GetRoomsStatus(string connectionID)
+        {
+            using (SqlConnection con = new SqlConnection(connString))
+            {
+                //
+                // Open the SqlConnection.
+                //
+                con.Open();
+
+                var userID = 0;
+                var roomID = 0;
+                string result = $"SELECT * FROM users WHERE connectionID = '{connectionID}'";
+                using (SqlCommand command = new SqlCommand(result, con))
+                using (SqlDataReader reader = command.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        userID = reader.GetSqlInt32(0).Value;
+                    }
+
+                }
+
+                string result2 = $"SELECT * FROM roomsstatus WHERE userID = {userID}";
+                using (SqlCommand command = new SqlCommand(result2, con))
+                using (SqlDataReader reader = command.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        roomID = reader.GetSqlInt32(1).Value;
+                    }
+
+                    return roomID;
+                }
+            }    
+        }
+
     }
 
 }
